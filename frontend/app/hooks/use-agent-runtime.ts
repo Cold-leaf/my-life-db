@@ -542,13 +542,21 @@ export function useAgentRuntime(options: {
             }
 
             const parts = [...last.content]
-            parts.push({
-              type: "tool-call",
-              toolCallId: f.toolCallId,
-              toolName: f.title ?? "unknown",
-              args,
-              argsText: typeof rawInput === "string" ? rawInput : JSON.stringify(rawInput ?? {}),
-            })
+            // Dedup: skip if this toolCallId already exists in the message.
+            // Without this, a replayed tool_call frame during burst replay
+            // can create a duplicate part, causing assistant-ui's
+            // tapResources to throw "Duplicate key toolCallId-xxx".
+            if (!parts.some(
+              (p) => p.type === "tool-call" && p.toolCallId === f.toolCallId
+            )) {
+              parts.push({
+                type: "tool-call",
+                toolCallId: f.toolCallId,
+                toolName: f.title ?? "unknown",
+                args,
+                argsText: typeof rawInput === "string" ? rawInput : JSON.stringify(rawInput ?? {}),
+              })
+            }
 
             replaceLastAssistant(updated, { ...last, content: parts }, parentToolUseId)
             return updated
