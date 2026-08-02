@@ -1337,6 +1337,9 @@ export default function AgentPage() {
   //   - session → empty new-session view, e.g. clicking + (key flips to 'new-N')
   //   - seedNewSession() bumps newSessionComposerKey to force a fresh read of
   //     the seeded localStorage prompt
+  // The sidebar is deliberately rendered outside this key: it holds no
+  // per-session state, and remounting it would reset its scroll position on
+  // every click. See withChatRuntime.
   const agentChatKey = activeSessionId ?? `new-${newSessionComposerKey}`
   const activeSessionAgentType: 'codex' | 'claude_code' | undefined = (() => {
     const at = effectiveActiveSession?.agentType
@@ -1376,8 +1379,8 @@ export default function AgentPage() {
     )
   }
 
-  // Props passed to <ChatRuntimeShell> in both render branches below.
-  // Spreading keeps the two call sites in sync.
+  // Props passed to <ChatRuntimeShell> at every chat-side call site (see
+  // withChatRuntime below). Spreading keeps the call sites in sync.
   const chatRuntimeShellProps = {
     sessionId: activeSessionId || '',
     hasActiveSession,
@@ -1401,6 +1404,18 @@ export default function AgentPage() {
     resultCount,
   }
 
+  // Wrap only the chat side in the runtime shell. The shell is keyed by session
+  // so its runtime (and MessageRepository) is rebuilt on every switch — see the
+  // comment on ChatRuntimeShell for why that remount is required. Keeping the
+  // sidebar outside that key means clicking a session no longer tears its DOM
+  // down: the scroll position, the resizable panel sizes and the search box all
+  // survive. Nothing on the sidebar side reads the runtime or AgentContext.
+  const withChatRuntime = (node: React.ReactNode) => (
+    <ChatRuntimeShell key={agentChatKey} {...chatRuntimeShellProps}>
+      {node}
+    </ChatRuntimeShell>
+  )
+
   // ─── Native app: single layout, no responsive split ─────────────────────────
   // The desktop/mobile conditional rendering below uses useIsMobile() to render
   // ChatInterface in one section or the other. On iPhone, rotating from portrait
@@ -1409,19 +1424,17 @@ export default function AgentPage() {
   // losing all React state (fullscreen preview, scroll position, messages).
   // The native app always shows a single session, so bypass the split entirely.
   if (isNativeApp() && activeSessionId) {
-    return (
-      <ChatRuntimeShell key={agentChatKey} {...chatRuntimeShellProps}>
-        <div className="flex h-full min-w-0">
-          <div className="flex flex-1 flex-col bg-background overflow-hidden min-w-0 h-full">
-            <AgentChat
-              sessionId={activeSessionId}
-              className="flex-1"
-              onAttachmentsStorageIdChange={handleAttachmentsStorageIdChange}
-              existingStorageId={effectiveActiveSession?.storageId ?? null}
-            />
-          </div>
+    return withChatRuntime(
+      <div className="flex h-full min-w-0">
+        <div className="flex flex-1 flex-col bg-background overflow-hidden min-w-0 h-full">
+          <AgentChat
+            sessionId={activeSessionId}
+            className="flex-1"
+            onAttachmentsStorageIdChange={handleAttachmentsStorageIdChange}
+            existingStorageId={effectiveActiveSession?.storageId ?? null}
+          />
         </div>
-      </ChatRuntimeShell>
+      </div>
     )
   }
 
@@ -1680,73 +1693,77 @@ export default function AgentPage() {
 
           {/* Main content panel */}
           <ResizablePanel defaultSize={70} minSize={40}>
-            <div className="relative flex flex-1 flex-col bg-background overflow-hidden min-w-0 h-full">
-              {/* Expand button when sidebar is collapsed */}
-              {isSidebarCollapsed && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="absolute top-2 left-2 z-20 h-8 w-8"
-                  onClick={() => setIsSidebarCollapsed(false)}
-                  title={t('sidebar.expand')}
-                >
-                  <PanelLeftOpen className="h-4 w-4" />
-                </Button>
-              )}
-              {/* Top-right buttons: share */}
-              {activeSessionId && effectiveActiveSession && !editingAgentName && (
-                <div className="absolute top-2 right-2 z-20 flex items-center gap-1">
-                  <ShareButton
-                    session={effectiveActiveSession}
-                    onUpdate={(fields) => updateSessionShare(activeSessionId, fields)}
+            {withChatRuntime(
+              <div className="relative flex flex-1 flex-col bg-background overflow-hidden min-w-0 h-full">
+                {/* Expand button when sidebar is collapsed */}
+                {isSidebarCollapsed && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="absolute top-2 left-2 z-20 h-8 w-8"
+                    onClick={() => setIsSidebarCollapsed(false)}
+                    title={t('sidebar.expand')}
+                  >
+                    <PanelLeftOpen className="h-4 w-4" />
+                  </Button>
+                )}
+                {/* Top-right buttons: share */}
+                {activeSessionId && effectiveActiveSession && !editingAgentName && (
+                  <div className="absolute top-2 right-2 z-20 flex items-center gap-1">
+                    <ShareButton
+                      session={effectiveActiveSession}
+                      onUpdate={(fields) => updateSessionShare(activeSessionId, fields)}
+                    />
+                  </div>
+                )}
+                {agentEditorPanel ? (
+                  agentEditorPanel
+                ) : activeSessionId ? (
+                  <AgentChat
+                    key={agentChatKey}
+                    sessionId={activeSessionId}
+                    className="flex-1"
+                    onAttachmentsStorageIdChange={handleAttachmentsStorageIdChange}
+                    existingStorageId={effectiveActiveSession?.storageId ?? null}
                   />
-                </div>
-              )}
-              {agentEditorPanel ? (
-                agentEditorPanel
-              ) : activeSessionId ? (
-                <AgentChat
-                  key={agentChatKey}
-                  sessionId={activeSessionId}
-                  className="flex-1"
-                  onAttachmentsStorageIdChange={handleAttachmentsStorageIdChange}
-                  existingStorageId={effectiveActiveSession?.storageId ?? null}
-                />
-              ) : (
-                <AgentChat
-                  key={agentChatKey}
-                  sessionId=""
-                  className="flex-1 agent-bg"
-                  onAttachmentsStorageIdChange={handleAttachmentsStorageIdChange}
-                />
-              )}
-            </div>
+                ) : (
+                  <AgentChat
+                    key={agentChatKey}
+                    sessionId=""
+                    className="flex-1 agent-bg"
+                    onAttachmentsStorageIdChange={handleAttachmentsStorageIdChange}
+                  />
+                )}
+              </div>
+            )}
           </ResizablePanel>
         </ResizablePanelGroup>
       ) : (
         /* No sidebar — just the chat area (or auto-agents editor when active,
            used by the native iOS shell to deep-link into the editor with
            sessionSidebar=false). */
-        <div className="flex-1 flex flex-col bg-background overflow-hidden min-w-0">
-          {agentEditorPanel ? (
-            agentEditorPanel
-          ) : activeSessionId ? (
-            <AgentChat
-              key={agentChatKey}
-              sessionId={activeSessionId}
-              className="flex-1"
-              onAttachmentsStorageIdChange={handleAttachmentsStorageIdChange}
-              existingStorageId={effectiveActiveSession?.storageId ?? null}
-            />
-          ) : (
-            <AgentChat
-              key={agentChatKey}
-              sessionId=""
-              className="flex-1 agent-bg"
-              onAttachmentsStorageIdChange={handleAttachmentsStorageIdChange}
-            />
-          )}
-        </div>
+        withChatRuntime(
+          <div className="flex-1 flex flex-col bg-background overflow-hidden min-w-0">
+            {agentEditorPanel ? (
+              agentEditorPanel
+            ) : activeSessionId ? (
+              <AgentChat
+                key={agentChatKey}
+                sessionId={activeSessionId}
+                className="flex-1"
+                onAttachmentsStorageIdChange={handleAttachmentsStorageIdChange}
+                existingStorageId={effectiveActiveSession?.storageId ?? null}
+              />
+            ) : (
+              <AgentChat
+                key={agentChatKey}
+                sessionId=""
+                className="flex-1 agent-bg"
+                onAttachmentsStorageIdChange={handleAttachmentsStorageIdChange}
+              />
+            )}
+          </div>
+        )
       )}
     </div>
   )
@@ -1755,56 +1772,62 @@ export default function AgentPage() {
   const mobileLayout = (
     <div className="flex flex-1 h-full min-w-0 overflow-hidden">
       {agentEditorPanel ? (
-        <div className="flex flex-1 flex-col bg-background overflow-hidden min-w-0">
-          {agentEditorPanel}
-        </div>
+        withChatRuntime(
+          <div className="flex flex-1 flex-col bg-background overflow-hidden min-w-0">
+            {agentEditorPanel}
+          </div>
+        )
       ) : activeSessionId ? (
         /* Detail view: full-screen chat with floating back button */
-        <div className="relative flex flex-1 flex-col bg-background overflow-hidden min-w-0">
-          {sessionSidebar && (
+        withChatRuntime(
+          <div className="relative flex flex-1 flex-col bg-background overflow-hidden min-w-0">
+            {sessionSidebar && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="absolute top-2 left-2 z-20 h-10 w-10 rounded-full bg-background/80 backdrop-blur"
+                onClick={goToList}
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </Button>
+            )}
+            {effectiveActiveSession && (
+              <div className="absolute top-2 right-2 z-20">
+                <ShareButton
+                  session={effectiveActiveSession}
+                  onUpdate={(fields) => updateSessionShare(activeSessionId, fields)}
+                />
+              </div>
+            )}
+            <AgentChat
+              key={agentChatKey}
+              sessionId={activeSessionId}
+              className="flex-1"
+              onAttachmentsStorageIdChange={handleAttachmentsStorageIdChange}
+              existingStorageId={effectiveActiveSession?.storageId ?? null}
+            />
+          </div>
+        )
+      ) : sessionSidebar && showNewSessionMobile ? (
+        /* New session view: full-screen chat input with back button */
+        withChatRuntime(
+          <div className="relative flex flex-1 flex-col agent-bg min-w-0">
             <Button
               variant="ghost"
               size="icon"
               className="absolute top-2 left-2 z-20 h-10 w-10 rounded-full bg-background/80 backdrop-blur"
-              onClick={goToList}
+              onClick={() => window.history.back()}
             >
               <ArrowLeft className="h-4 w-4" />
             </Button>
-          )}
-          {effectiveActiveSession && (
-            <div className="absolute top-2 right-2 z-20">
-              <ShareButton
-                session={effectiveActiveSession}
-                onUpdate={(fields) => updateSessionShare(activeSessionId, fields)}
-              />
-            </div>
-          )}
-          <AgentChat
-            key={agentChatKey}
-            sessionId={activeSessionId}
-            className="flex-1"
-            onAttachmentsStorageIdChange={handleAttachmentsStorageIdChange}
-            existingStorageId={effectiveActiveSession?.storageId ?? null}
-          />
-        </div>
-      ) : sessionSidebar && showNewSessionMobile ? (
-        /* New session view: full-screen chat input with back button */
-        <div className="relative flex flex-1 flex-col agent-bg min-w-0">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="absolute top-2 left-2 z-20 h-10 w-10 rounded-full bg-background/80 backdrop-blur"
-            onClick={() => window.history.back()}
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-          <AgentChat
-            key={agentChatKey}
-            sessionId=""
-            className="flex-1"
-            onAttachmentsStorageIdChange={handleAttachmentsStorageIdChange}
-          />
-        </div>
+            <AgentChat
+              key={agentChatKey}
+              sessionId=""
+              className="flex-1"
+              onAttachmentsStorageIdChange={handleAttachmentsStorageIdChange}
+            />
+          </div>
+        )
       ) : sessionSidebar ? (
         /* List view: full-screen session list (filtered by active tab) */
         <div className="flex flex-1 flex-col bg-muted/30 min-w-0 overflow-hidden">
@@ -1852,18 +1875,20 @@ export default function AgentPage() {
         </div>
       ) : (
         /* No sidebar (hybrid app) — just the chat input */
-        <AgentChat
-          key={agentChatKey}
-          sessionId=""
-          className="flex-1 agent-bg"
-          onAttachmentsStorageIdChange={handleAttachmentsStorageIdChange}
-        />
+        withChatRuntime(
+          <AgentChat
+            key={agentChatKey}
+            sessionId=""
+            className="flex-1 agent-bg"
+            onAttachmentsStorageIdChange={handleAttachmentsStorageIdChange}
+          />
+        )
       )}
     </div>
   )
 
   return (
-    <ChatRuntimeShell key={agentChatKey} {...chatRuntimeShellProps}>
+    <>
       <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
         {isMobile ? mobileLayout : desktopLayout}
       </div>
@@ -1888,6 +1913,6 @@ export default function AgentPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </ChatRuntimeShell>
+    </>
   )
 }
